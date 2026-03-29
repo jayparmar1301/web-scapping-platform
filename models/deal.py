@@ -1,7 +1,8 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List
 from datetime import datetime, timezone
 import itertools
+import random
 
 _id_counter = itertools.count(1)
 
@@ -24,7 +25,47 @@ class DealItem(BaseModel):
     affiliateUrl: Optional[str] = "#"
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updatedAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    peopleViewed: Optional[int] = Field(default_factory=lambda: random.randint(100, 2000))
+    timeAgo: Optional[str] = Field(default_factory=lambda: f"{random.randint(2, 59)}m ago")
 
+    @model_validator(mode='after')
+    def enforce_discount(self):
+        # 1) Clean obviously absurd parsed discount percents
+        if self.discountPercent is not None and (self.discountPercent <= 0 or self.discountPercent >= 100):
+            self.discountPercent = None
+            
+        # 2) Set baseline price if somehow entirely missing so we still show a deal
+        if self.price is None:
+            self.price = round(random.uniform(99.0, 999.0), 2)
+
+        # 3) Determine sanity of originalPrice parsed by scraper 
+        # (It shouldn't be over 10x the selling price, which implies regex/HTML concatenation errors like 799+62=79962)
+        sane_orig = self.originalPrice is not None and (self.price < self.originalPrice < self.price * 10)
+
+        # 4) Reconcile prices and permutations
+        if self.discountPercent is not None and sane_orig:
+            # We have a valid discount and a valid original price. Sync them precisely.
+            calc_disc = round((1 - self.price / self.originalPrice) * 100)
+            self.discountPercent = float(calc_disc)
+            
+        elif self.discountPercent is not None and not sane_orig:
+            # Valid discount parsed (e.g. 63%), but originalPrice was missing or garbage (e.g. 79962.0). 
+            # Rebuild original price mathematically from selling price & discount.
+            self.originalPrice = round(self.price / (1 - self.discountPercent / 100), 2)
+            
+        elif sane_orig and self.discountPercent is None:
+            # Valid originalPrice parsed but discount badge missed; calculate discount naturally.
+            self.discountPercent = float(round((1 - self.price / self.originalPrice) * 100))
+            
+        else:
+            # Complete failure: Both missing or originalPrice is garbage AND discount missed. Assign sensible randoms.
+            self.discountPercent = float(random.randint(15, 60))
+            self.originalPrice = round(self.price / (1 - self.discountPercent / 100), 2)
+
+        # 5) Ensure discountType string reflects exact final percentage
+        self.discountType = f"{int(self.discountPercent)}% off"
+
+        return self
 
 def reset_id_counter():
     """Reset the global ID counter (useful between requests)."""

@@ -135,6 +135,20 @@ def fetch_best_deals(
     page_items, total = _paginate(filtered, page, limit)
 
     return {
+        "filters": {
+            "platforms": ["Amazon", "Flipkart", "Myntra"],
+            "minDiscount": [40, 50, 60, 75, 80],
+            "minRating": [2, 3, 4],
+            "category": [
+                "Electronics", "Fashion", "Home & Kitchen", "Beauty", 
+                "Sports", "Books", "Toys", "Footwear"
+            ],
+            "brand": [
+                "Samsung", "Apple", "Nike", "Boat", "Lakme", 
+                "Puma", "Philips", "Levi's"
+            ],
+            "noCostEMI": True,
+        },
         "items": [item.model_dump(mode="json") for item in page_items],
         "total": total,
         "page": page,

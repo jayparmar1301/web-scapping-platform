@@ -333,6 +333,14 @@ def _parse_flipkart_product_card(card) -> DealItem | None:
                 candidate = parse_price(f"₹{price_matches[1]}")
                 if candidate and candidate > price:
                     original_price = candidate
+            
+            # Additional Fallback: if text has pattern "88% 2,599 ₹299" (discount, orig price, true price)
+            if original_price is None:
+                m = re.search(r'%\s*([\d,]+)\s*₹', full_text)
+                if m:
+                    candidate = parse_price(m.group(1))
+                    if candidate and candidate > price:
+                        original_price = candidate
 
         # ---------- Discount ----------
         disc_el = (
@@ -343,10 +351,10 @@ def _parse_flipkart_product_card(card) -> DealItem | None:
         disc_text = disc_el.inner_text() if disc_el else None
         discount_percent = _parse_discount_pct(disc_text)
 
-        # Fallback: look for "XX% off" anywhere in card text
+        # Fallback: look for "XX% off" or just "XX%" anywhere in card text
         if not discount_percent:
             full_text = card.inner_text()
-            m = re.search(r'(\d+)\s*%\s*off', full_text, re.IGNORECASE)
+            m = re.search(r'(?i)(\d{1,2})\s*%\s*(?:off)?', full_text)
             if m:
                 discount_percent = float(m.group(1))
 
@@ -415,7 +423,7 @@ def _parse_flipkart_tile(tile) -> DealItem | None:
         price = parse_price(price_match.group(0)) if price_match else None
 
         # Discount
-        disc_match = re.search(r'(\d+)\s*%\s*off', text, re.IGNORECASE)
+        disc_match = re.search(r'(?i)(\d{1,2})\s*%\s*(?:off)?', text)
         discount_percent = float(disc_match.group(1)) if disc_match else None
 
         # Link
@@ -473,7 +481,7 @@ def _parse_flipkart_product_link(link_el, page) -> DealItem | None:
         price_match = re.search(r'₹\s*[\d,]+', text)
         price = parse_price(price_match.group(0)) if price_match else None
 
-        disc_match = re.search(r'(\d+)\s*%\s*off', text, re.IGNORECASE)
+        disc_match = re.search(r'(?i)(\d{1,2})\s*%\s*(?:off)?', text)
         discount_percent = float(disc_match.group(1)) if disc_match else None
 
         link = _make_flipkart_link_from_href(href)
