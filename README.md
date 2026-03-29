@@ -9,6 +9,8 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
+*(Note: If deploying to a VPS like Hostinger/Linux, you must also run `playwright install-deps` to install required system graphical libraries).*
+
 Create a `.env` file (optional, for proxy):
 ```
 PROXY_HOST=...

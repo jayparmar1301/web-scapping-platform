@@ -571,14 +571,17 @@ def _extract_flipkart_rating(container) -> tuple[float | None, int | None]:
             count = int(m.group(1))
 
     # Fallback: search full text for rating pattern
-    if rating is None:
+    if rating is None or count is None:
         try:
             full_text = container.inner_text()
-            m = re.search(r'([\d.]+)\s*[★⭐]', full_text)
+            # Match patterns like: "3.9 ★ | 206", "4.1 | 1,60,132", "4.2 (14,000 Ratings)", "4.5 \n 1,200"
+            m = re.search(r'\b([1-4]\.\d|5\.0)\b\s*[★⭐\*]?\s*\|?\s*\(?\s*\n?\s*([\d,]+)\b(?:\s*Ratings|\s*Reviews)?', full_text, flags=re.IGNORECASE)
             if m:
                 val = float(m.group(1))
-                if 0 < val <= 5:
+                if 0 < val <= 5 and rating is None:
                     rating = val
+                if count is None:
+                    count = int(m.group(2).replace(',', ''))
         except:
             pass
 
