@@ -1,6 +1,8 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Depends
+from sqlalchemy.orm import Session
 from typing import Optional
 from services.deal_service import fetch_best_deals, get_top_categories, get_top_brands
+from core.database import get_db
 
 app = FastAPI(title="Deal Scraper API", version="2.0.0")
 
@@ -16,11 +18,13 @@ def best_deals(
     noCostEMI: Optional[str] = Query(None, description="'true' to filter for No Cost EMI only"),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db)
 ):
     """Fetch best deals across platforms with filtering and pagination."""
     emi_flag = noCostEMI and noCostEMI.lower() == "true"
 
     return fetch_best_deals(
+        db,
         search=search,
         platforms=platforms,
         categories=categories,
@@ -34,15 +38,15 @@ def best_deals(
 
 
 @app.get("/deals/top-categories")
-def top_categories():
+def top_categories(db: Session = Depends(get_db)):
     """Return the top 8 categories from current deals."""
-    return get_top_categories()
+    return get_top_categories(db)
 
 
 @app.get("/deals/top-brands")
-def top_brands():
+def top_brands(db: Session = Depends(get_db)):
     """Return the top 8 brands from current deals."""
-    return get_top_brands()
+    return get_top_brands(db)
 
 
 if __name__ == "__main__":
