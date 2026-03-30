@@ -262,7 +262,7 @@ def get_deals() -> list[DealItem]:
             try:
                 # --- Phase 2: Fetch from discovered paths ---
                 for path in discovered_paths:
-                    if len(deals) >= 30:
+                    if len(deals) >= 250:
                         break
 
                     captured_products.clear()
@@ -275,7 +275,7 @@ def get_deals() -> list[DealItem]:
                     print("[Myntra] Discovery yielded 0 deals, trying trending search...")
                     trending = _get_trending_searches(page)
                     for term in trending:
-                        if len(deals) >= 20:
+                        if len(deals) >= 250:
                             break
 
                         captured_products.clear()
@@ -301,7 +301,7 @@ def get_deals() -> list[DealItem]:
             unique.append(d)
 
     print(f"[Myntra] Total deals scraped: {len(unique)}")
-    return unique[:30]
+    return unique[:250]
 
 
 # ---------------------------------------------------------------------------
@@ -466,7 +466,7 @@ def _fetch_with_browser(page, path: str, captured_products: list[dict]) -> list[
         if captured_products:
             print(f"[Myntra] Strategy 1 (XHR) — {len(captured_products)} products intercepted")
             results = []
-            for p in captured_products[:20]:
+            for p in captured_products[:100]:
                 deal = _myntra_product_to_deal(p)
                 if deal:
                     results.append(deal)
@@ -478,7 +478,7 @@ def _fetch_with_browser(page, path: str, captured_products: list[dict]) -> list[
         if products:
             print(f"[Myntra] Strategy 2 (embedded JSON) — {len(products)} products")
             results = []
-            for p in products[:20]:
+            for p in products[:100]:
                 deal = _myntra_product_to_deal(p)
                 if deal:
                     results.append(deal)
@@ -562,7 +562,7 @@ def _parse_dom_product_cards(page) -> list[DealItem]:
         if cards:
             print(f"[Myntra] DOM broad fallback matched {len(cards)} cards")
 
-    for card in cards[:20]:
+    for card in cards[:100]:
         try:
             text = card.inner_text()
             lines = [l.strip() for l in text.split("\n") if l.strip()]

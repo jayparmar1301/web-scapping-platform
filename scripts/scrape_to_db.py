@@ -26,7 +26,7 @@ def scrape_and_store():
 
         for fut in [f_amazon, f_flipkart, f_myntra]:
             try:
-                result = fut.result(timeout=60)
+                result = fut.result(timeout=300)
                 all_deals.extend(result)
             except Exception as e:
                 print(f"Platform fetch error: {e}")

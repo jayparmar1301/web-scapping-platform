@@ -173,7 +173,7 @@ def get_deals() -> list[DealItem]:
                     "https://www.flipkart.com/offers-store",
                     "https://www.flipkart.com/deals-of-the-day",
                 ]:
-                    if len(deals) >= 20:
+                    if len(deals) >= 150:
                         break
 
                     try:
@@ -190,7 +190,7 @@ def get_deals() -> list[DealItem]:
                         # Strategy 1: Product cards with data-id
                         product_cards = page.query_selector_all("div[data-id]")
                         print(f"[Flipkart] Strategy 1 — div[data-id] cards found: {len(product_cards)}")
-                        for card in product_cards[:20]:
+                        for card in product_cards[:100]:
                             deal = _parse_flipkart_product_card(card)
                             if deal:
                                 deals.append(deal)
@@ -204,7 +204,7 @@ def get_deals() -> list[DealItem]:
                                 "div[class*='_4ddWXP']"
                             )
                             print(f"[Flipkart] Strategy 2 — deal tiles found: {len(tiles)}")
-                            for tile in tiles[:20]:
+                            for tile in tiles[:100]:
                                 deal = _parse_flipkart_tile(tile)
                                 if deal:
                                     deals.append(deal)
@@ -213,7 +213,7 @@ def get_deals() -> list[DealItem]:
                         if not deals:
                             all_links = page.query_selector_all("a[href*='/p/']")
                             print(f"[Flipkart] Strategy 3 — /p/ links found: {len(all_links)}")
-                            for link_el in all_links[:20]:
+                            for link_el in all_links[:100]:
                                 deal = _parse_flipkart_product_link(link_el, page)
                                 if deal:
                                     deals.append(deal)
@@ -230,7 +230,7 @@ def get_deals() -> list[DealItem]:
                         "top deals",
                     ]
                     for q in search_queries:
-                        if len(deals) >= 20:
+                        if len(deals) >= 150:
                             break
                         try:
                             search_url = f"https://www.flipkart.com/search?q={urllib.parse.quote_plus(q)}"
@@ -244,7 +244,7 @@ def get_deals() -> list[DealItem]:
 
                             product_cards = page.query_selector_all("div[data-id]")
                             print(f"[Flipkart] Search '{q}' — found {len(product_cards)} product cards")
-                            for card in product_cards[:10]:
+                            for card in product_cards[:50]:
                                 deal = _parse_flipkart_product_card(card)
                                 if deal:
                                     deals.append(deal)

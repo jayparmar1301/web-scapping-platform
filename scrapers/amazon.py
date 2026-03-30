@@ -108,15 +108,14 @@ def _scrape_goldbox() -> list[DealItem]:
             "div.a-section.dealContainer"
         )
 
-        for card in cards[:30]:
+        for card in cards[:100]:
             deal = _parse_amazon_deal_card(card)
             if deal:
                 deals.append(deal)
 
-        # If goldbox didn't yield structured cards, try product grid items
         if not deals:
             items = soup.select("div[data-component-type='s-search-result'], li.a-spacing-none")
-            for item in items[:20]:
+            for item in items[:100]:
                 deal = _parse_amazon_search_item(item)
                 if deal:
                     deals.append(deal)
@@ -139,7 +138,7 @@ def _scrape_deals_search() -> list[DealItem]:
     ]
 
     for q in queries:
-        if len(deals) >= 20:
+        if len(deals) >= 150:
             break
         try:
             url = f"https://www.amazon.in/s?k={urllib.parse.quote_plus(q)}&deals=1"
@@ -148,7 +147,7 @@ def _scrape_deals_search() -> list[DealItem]:
             soup = BeautifulSoup(resp.text, 'lxml')
 
             items = soup.select("div[data-component-type='s-search-result']")
-            for item in items[:10]:
+            for item in items[:50]:
                 deal = _parse_amazon_search_item(item)
                 if deal:
                     deals.append(deal)
