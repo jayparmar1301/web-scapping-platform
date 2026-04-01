@@ -6,6 +6,7 @@ class DBDeal(Base):
     __tablename__ = "deals"
 
     id = Column(Integer, primary_key=True, index=True)
+    slug = Column(String, unique=True, index=True, nullable=True)
     title = Column(String, index=True)
     brand = Column(String, index=True, nullable=True)
     discountType = Column(String, nullable=True)
@@ -24,3 +25,4 @@ class DBDeal(Base):
     timeAgo = Column(String, nullable=True)
     createdAt = Column(DateTime, default=datetime.datetime.utcnow)
     updatedAt = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+

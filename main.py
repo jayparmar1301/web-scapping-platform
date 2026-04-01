@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Query, Depends
 from sqlalchemy.orm import Session
 from typing import Optional
-from services.deal_service import fetch_best_deals, get_top_categories, get_top_brands
+from services.deal_service import fetch_best_deals, get_top_categories, get_top_brands, fetch_deal_by_slug
 from core.database import get_db
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -55,6 +55,12 @@ def top_categories(db: Session = Depends(get_db)):
 def top_brands(db: Session = Depends(get_db)):
     """Return the top 8 brands from current deals."""
     return get_top_brands(db)
+
+
+@app.get("/deals/{slug}")
+def deal_by_slug(slug: str, db: Session = Depends(get_db)):
+    """Fetch a single deal by its URL slug."""
+    return fetch_deal_by_slug(db, slug)
 
 
 if __name__ == "__main__":

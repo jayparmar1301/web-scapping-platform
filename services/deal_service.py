@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func, desc
+from fastapi import HTTPException
 from models.db_models import DBDeal
 
 def fetch_best_deals(
@@ -61,6 +62,7 @@ def fetch_best_deals(
     for item in page_items:
         items_json.append({
             "id": item.id,
+            "slug": item.slug,
             "title": item.title,
             "brand": item.brand,
             "discountType": item.discountType,
@@ -141,3 +143,32 @@ def get_top_brands(db: Session, top_n: int = 8) -> dict:
     
     brands = [brand for brand, _ in results]
     return {"brands": brands}
+
+def fetch_deal_by_slug(db: Session, slug: str) -> dict:
+    """Fetch a single deal by its URL slug."""
+    item = db.query(DBDeal).filter(DBDeal.slug == slug).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Deal not found")
+
+    return {
+        "id": item.id,
+        "slug": item.slug,
+        "title": item.title,
+        "brand": item.brand,
+        "discountType": item.discountType,
+        "discountPercent": item.discountPercent,
+        "price": item.price,
+        "originalPrice": item.originalPrice,
+        "category": item.category,
+        "images": item.images,
+        "platformName": item.platformName,
+        "platformLink": item.platformLink,
+        "rating": item.rating,
+        "ratingCount": item.ratingCount,
+        "noCostEMI": item.noCostEMI,
+        "affiliateUrl": item.affiliateUrl,
+        "peopleViewed": item.peopleViewed,
+        "timeAgo": item.timeAgo,
+        "createdAt": item.createdAt.isoformat() if item.createdAt else None,
+        "updatedAt": item.updatedAt.isoformat() if item.updatedAt else None,
+    }

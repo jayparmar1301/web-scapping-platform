@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 import concurrent.futures
 
 # Make sure we can import from the root project
@@ -56,10 +57,23 @@ def scrape_and_store():
         # Load existing records keyed by (title, platform) for comparison
         existing_rows = db.query(DBDeal).all()
         existing_map: dict[str, DBDeal] = {}
+        existing_slugs: set[str] = set()
         for row in existing_rows:
             key = _make_dedup_key(row.title, row.platformName)
             if key:
                 existing_map[key] = row
+            if row.slug:
+                existing_slugs.add(row.slug)
+
+        # Backfill slugs for existing records that don't have one
+        backfilled = 0
+        for row in existing_rows:
+            if not row.slug:
+                row.slug = _generate_slug(row.title, row.platformName, existing_slugs)
+                existing_slugs.add(row.slug)
+                backfilled += 1
+        if backfilled:
+            print(f"Backfilled slugs for {backfilled} existing records.")
 
         inserted = 0
         updated = 0
@@ -70,8 +84,11 @@ def scrape_and_store():
             existing = existing_map.get(key)
 
             if existing is None:
-                # New deal — insert
+                # New deal — insert with slug
+                slug = _generate_slug(deal.title, deal.platformName, existing_slugs)
+                existing_slugs.add(slug)
                 db.add(DBDeal(
+                    slug=slug,
                     title=deal.title,
                     brand=deal.brand,
                     discountType=deal.discountType,
@@ -147,6 +164,38 @@ def _make_dedup_key(title: str | None, platform: str | None) -> str | None:
     normalized_title = title.strip().lower()
     normalized_platform = (platform or "").strip().lower()
     return f"{normalized_platform}::{normalized_title}"
+
+
+def _generate_slug(title: str | None, platform: str | None, existing_slugs: set[str]) -> str:
+    """Generate a unique URL-friendly slug from platform + title.
+    
+    Examples:
+        'Amazon', 'Samsung Galaxy S24 Ultra 256GB' → 'amazon-samsung-galaxy-s24-ultra-256gb'
+        'Myntra', 'Adidas Men Running Shoes'       → 'myntra-adidas-men-running-shoes'
+    """
+    platform_part = (platform or "unknown").strip().lower()
+    title_part = (title or "untitled").strip().lower()
+
+    # Combine platform and title
+    raw = f"{platform_part}-{title_part}"
+
+    # Replace non-alphanumeric characters with hyphens
+    slug = re.sub(r'[^a-z0-9]+', '-', raw)
+    # Remove leading/trailing hyphens and collapse multiple hyphens
+    slug = re.sub(r'-+', '-', slug).strip('-')
+    # Truncate to 200 chars (at a word boundary if possible)
+    if len(slug) > 200:
+        slug = slug[:200].rsplit('-', 1)[0]
+
+    # Ensure uniqueness by appending a numeric suffix if needed
+    base_slug = slug
+    counter = 1
+    while slug in existing_slugs:
+        slug = f"{base_slug}-{counter}"
+        counter += 1
+
+    return slug
+
 
 if __name__ == "__main__":
     scrape_and_store()
