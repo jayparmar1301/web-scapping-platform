@@ -157,10 +157,22 @@ def get_deals() -> list[DealItem]:
     """Scrape Flipkart deals pages for individual product cards.
 
     Strategy:
-      1. Try /offers-store and /deals-of-the-day for product grids.
-      2. Parse product cards (div[data-id]), deal tiles, or product links.
-      3. Fallback: search Flipkart for deal keywords to get real products.
+      1. Try Playwright browser for full JS-rendered pages.
+      2. If Playwright fails (not installed / browser missing), fall back
+         to plain HTTP + BeautifulSoup search scraping.
     """
+    deals = _scrape_with_playwright()
+
+    if not deals:
+        print("[Flipkart] Playwright yielded 0, trying HTTP fallback...")
+        deals = _scrape_with_http()
+
+    print(f"[Flipkart] Total deals scraped: {len(deals)}")
+    return deals
+
+
+def _scrape_with_playwright() -> list[DealItem]:
+    """Scrape Flipkart using Playwright headless browser."""
     deals: list[DealItem] = []
 
     try:
@@ -260,8 +272,192 @@ def get_deals() -> list[DealItem]:
     except Exception as e:
         print(f"[Flipkart] Playwright launch error: {e}")
 
-    print(f"[Flipkart] Total deals scraped: {len(deals)}")
     return deals
+
+
+def _scrape_with_http() -> list[DealItem]:
+    """Fallback: scrape Flipkart using plain HTTP + BeautifulSoup.
+
+    Works when Playwright isn't available. Flipkart sometimes serves
+    partial HTML without JS rendering, but search pages often have
+    enough product data in the initial HTML response.
+    """
+    from bs4 import BeautifulSoup
+    from core.http_client import get_session
+
+    session = get_session()
+    deals: list[DealItem] = []
+
+    queries = [
+        "deals of the day",
+        "best offers today",
+        "top deals",
+        "mobile offers",
+        "electronics deals",
+    ]
+
+    for q in queries:
+        if len(deals) >= 150:
+            break
+        try:
+            url = f"https://www.flipkart.com/search?q={urllib.parse.quote_plus(q)}"
+            resp = session.get(url, timeout=20)
+            resp.encoding = 'utf-8'
+            soup = BeautifulSoup(resp.text, 'lxml')
+
+            print(f"[Flipkart] HTTP search '{q}' — page length={len(resp.text)}")
+
+            # Check for captcha
+            if "recaptcha" in resp.text.lower() or len(resp.text) < 5000:
+                print(f"[Flipkart] HTTP search '{q}' — CAPTCHA/block detected")
+                continue
+
+            # Parse product cards from raw HTML
+            cards = soup.select("div[data-id]")
+            print(f"[Flipkart] HTTP search '{q}' — found {len(cards)} product cards")
+
+            for card in cards[:50]:
+                deal = _parse_flipkart_html_card(card)
+                if deal:
+                    deals.append(deal)
+
+        except Exception as e:
+            print(f"[Flipkart] HTTP search error ({q}): {e}")
+
+    print(f"[Flipkart] HTTP fallback deals: {len(deals)}")
+    return deals
+
+
+def _parse_flipkart_html_card(card) -> DealItem | None:
+    """Parse a Flipkart product card from raw BeautifulSoup HTML."""
+    try:
+        # Title
+        title_el = (
+            card.select_one("a[class*='wjcEIp']") or
+            card.select_one("a[class*='IRpwTa']") or
+            card.select_one("div[class*='_4rR01T']") or
+            card.select_one("a[class*='s1Q9rs']") or
+            card.select_one("a[title]") or
+            card.select_one("a[href*='/p/']")
+        )
+        title = None
+        if title_el:
+            title = title_el.get("title") or title_el.get_text(strip=True)
+
+        # Fallback: first meaningful text line
+        if not title or len(title.strip()) < 3:
+            text = card.get_text(separator="\n", strip=True)
+            lines = [l.strip() for l in text.split("\n") if l.strip() and len(l.strip()) > 3]
+            for line in lines:
+                if not re.match(r'^[₹\d,%\s.off]+$', line, re.IGNORECASE):
+                    title = line
+                    break
+
+        if not title or len(title.strip()) < 3:
+            return None
+        title = title.strip()[:200]
+
+        # Price
+        price_el = (
+            card.select_one("div[class*='Nx9bqj']") or
+            card.select_one("div[class*='_30jeq3']") or
+            card.select_one("div.hZ3P6w")
+        )
+        price = parse_price(price_el.get_text(strip=True) if price_el else None)
+
+        if price is None:
+            text = card.get_text(separator=" ", strip=True)
+            m = re.search(r'₹\s*([\d,]+)', text)
+            if m:
+                price = parse_price(f"₹{m.group(1)}")
+
+        # Original price
+        orig_el = (
+            card.select_one("div[class*='yRaY8j']") or
+            card.select_one("div[class*='_3I9_wc']") or
+            card.select_one("strike") or
+            card.select_one("del")
+        )
+        original_price = parse_price(orig_el.get_text(strip=True) if orig_el else None)
+
+        # Discount
+        disc_el = (
+            card.select_one("div[class*='UkUFwK']") or
+            card.select_one("div[class*='_3Ay6Sb']")
+        )
+        disc_text = disc_el.get_text(strip=True) if disc_el else None
+        discount_percent = _parse_discount_pct(disc_text)
+
+        if not discount_percent:
+            text = card.get_text(separator=" ", strip=True)
+            m = re.search(r'(\d{1,2})\s*%\s*(?:off)?', text, re.IGNORECASE)
+            if m:
+                discount_percent = float(m.group(1))
+
+        if not discount_percent:
+            discount_percent = compute_discount(price, original_price)
+
+        # Link
+        link_el = card.select_one("a[href*='/p/']") or card.select_one("a[href]")
+        link = None
+        if link_el and link_el.get("href"):
+            href = link_el["href"]
+            link = ("https://www.flipkart.com" + href) if href.startswith("/") else href
+
+        # Image
+        img_el = (
+            card.select_one("img[src*='rukminim']") or
+            card.select_one("img[src*='flixcart']") or
+            card.select_one("img[src]")
+        )
+        img_src = img_el.get("src") if img_el else None
+        images = [img_src] if img_src and not img_src.startswith("data:") else []
+
+        # Rating
+        rating = None
+        rating_count = None
+        rating_el = (
+            card.select_one("div[class*='XQDdHH']") or
+            card.select_one("div[class*='_3LWZlK']")
+        )
+        if rating_el:
+            m = re.search(r'([\d.]+)', rating_el.get_text(strip=True))
+            if m:
+                val = float(m.group(1))
+                if 0 < val <= 5:
+                    rating = val
+
+        count_el = (
+            card.select_one("span[class*='Wphh3N']") or
+            card.select_one("span[class*='_2_R_DZ']")
+        )
+        if count_el:
+            m = re.search(r'(\d[\d,]*)', count_el.get_text(strip=True).replace(",", ""))
+            if m:
+                rating_count = int(m.group(1))
+
+        brand = extract_brand(title)
+        discount_type = f"{int(discount_percent)}% off" if discount_percent else None
+
+        return DealItem(
+            title=title,
+            brand=brand,
+            discountType=discount_type,
+            discountPercent=discount_percent,
+            price=price,
+            originalPrice=original_price,
+            category="General",
+            images=images,
+            platformName="Flipkart",
+            platformLink=link,
+            rating=rating,
+            ratingCount=rating_count,
+            noCostEMI=False,
+            affiliateUrl=link or "#",
+        )
+    except Exception as e:
+        print(f"[Flipkart] HTML card parse error: {e}")
+        return None
 
 
 def _parse_flipkart_product_card(card) -> DealItem | None:

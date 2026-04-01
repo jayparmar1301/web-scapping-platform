@@ -213,13 +213,31 @@ _MYNTRA_CATEGORY_MAP = {
 def get_deals() -> list[DealItem]:
     """Dynamically discover and scrape Myntra deals.
 
-    Strategy (fully dynamic):
-      1. Discover category paths from Myntra homepage/nav (plain HTTP — works).
-      2. Open ONE Playwright browser session.
-      3. For each discovered path, load the listing page in the browser,
-         intercept XHR product data OR parse the rendered DOM.
-      4. If discovery paths yield nothing, try trending search terms.
+    Strategy:
+      1. Try Playwright browser for full JS-rendered pages + XHR interception.
+      2. If Playwright fails, fall back to HTTP-based API/HTML scraping.
     """
+    deals = _scrape_with_playwright()
+
+    if not deals:
+        print("[Myntra] Playwright yielded 0, trying HTTP fallback...")
+        deals = _scrape_with_http()
+
+    # Deduplicate by title
+    seen: set[str] = set()
+    unique: list[DealItem] = []
+    for d in deals:
+        key = d.title.lower().strip()
+        if key not in seen:
+            seen.add(key)
+            unique.append(d)
+
+    print(f"[Myntra] Total deals scraped: {len(unique)}")
+    return unique[:250]
+
+
+def _scrape_with_playwright() -> list[DealItem]:
+    """Scrape Myntra using Playwright headless browser + XHR interception."""
     deals: list[DealItem] = []
 
     # Phase 1: Discover category paths dynamically (plain HTTP)
@@ -291,17 +309,75 @@ def get_deals() -> list[DealItem]:
     except Exception as e:
         print(f"[Myntra] Playwright launch error: {e}")
 
-    # Deduplicate by title
-    seen: set[str] = set()
-    unique: list[DealItem] = []
-    for d in deals:
-        key = d.title.lower().strip()
-        if key not in seen:
-            seen.add(key)
-            unique.append(d)
+    return deals
 
-    print(f"[Myntra] Total deals scraped: {len(unique)}")
-    return unique[:250]
+
+def _scrape_with_http() -> list[DealItem]:
+    """Fallback: scrape Myntra using plain HTTP + internal search API.
+
+    Myntra's search API sometimes responds to direct requests with product JSON.
+    We also try parsing embedded __myx JSON from listing page HTML.
+    """
+    deals: list[DealItem] = []
+    session = _get_myntra_session()
+
+    # Discover paths from homepage (already works via plain HTTP)
+    discovered_paths = _discover_category_paths()
+
+    # Strategy 1: Hit the internal search/gateway API directly
+    search_terms = [p.replace("-", " ") for p in discovered_paths[:10]]
+    if not search_terms:
+        search_terms = ["tshirts", "shoes", "dresses", "kurtas", "watches",
+                        "jeans", "sarees", "sneakers", "bags", "sunglasses"]
+
+    for term in search_terms:
+        if len(deals) >= 250:
+            break
+        try:
+            search_slug = term.replace(" ", "-").lower()
+            api_url = f"https://www.myntra.com/gateway/v2/search/{urllib.parse.quote(search_slug)}"
+            params = {"p": "1", "rows": "50", "o": "0", "platefrom": "desktop", "q": search_slug}
+
+            resp = session.get(api_url, params=params, timeout=20)
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                    products = data.get("products", [])
+                    print(f"[Myntra] HTTP API '{term}' — {len(products)} products")
+                    for p in products[:50]:
+                        deal = _myntra_product_to_deal(p)
+                        if deal:
+                            deals.append(deal)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+        except Exception as e:
+            print(f"[Myntra] HTTP API error ({term}): {e}")
+
+    # Strategy 2: Parse embedded JSON from listing page HTML
+    if not deals:
+        print("[Myntra] API returned 0, trying HTML embedded JSON...")
+        base_session = get_session()
+        for path in discovered_paths[:10]:
+            if len(deals) >= 250:
+                break
+            try:
+                url = f"https://www.myntra.com/{urllib.parse.quote(path)}?sort=discount"
+                resp = base_session.get(url, timeout=20)
+                resp.encoding = 'utf-8'
+                print(f"[Myntra] HTTP page '{path}' — length={len(resp.text)}")
+
+                products = _extract_products_from_page(resp.text)
+                if products:
+                    print(f"[Myntra] Embedded JSON '{path}' — {len(products)} products")
+                    for p in products[:50]:
+                        deal = _myntra_product_to_deal(p)
+                        if deal:
+                            deals.append(deal)
+            except Exception as e:
+                print(f"[Myntra] HTTP page error ({path}): {e}")
+
+    print(f"[Myntra] HTTP fallback deals: {len(deals)}")
+    return deals
 
 
 # ---------------------------------------------------------------------------
