@@ -45,7 +45,7 @@ def search_product(query: str):
                 page.wait_for_timeout(4000)
 
                 content = page.content()
-                if "recaptcha" in content.lower() or "are you a human" in content.lower():
+                if _is_flipkart_blocked(content):
                     print("Flipkart: CAPTCHA detected even with Playwright")
                     browser.close()
                     return []
@@ -109,7 +109,7 @@ def extract_product_title(url: str):
                 page.wait_for_timeout(3000)
 
                 content = page.content()
-                if "recaptcha" in content.lower():
+                if _is_flipkart_blocked(content):
                     browser.close()
                     return _extract_title_from_url(url)
 
@@ -193,7 +193,7 @@ def _scrape_with_playwright() -> list[DealItem]:
                         page.wait_for_timeout(5000)
 
                         content = page.content()
-                        if "recaptcha" in content.lower():
+                        if _is_flipkart_blocked(content):
                             print(f"[Flipkart] CAPTCHA detected on {deals_url}, skipping")
                             continue
 
@@ -250,7 +250,7 @@ def _scrape_with_playwright() -> list[DealItem]:
                             page.wait_for_timeout(5000)
 
                             content = page.content()
-                            if "recaptcha" in content.lower():
+                            if _is_flipkart_blocked(content):
                                 print(f"[Flipkart] CAPTCHA on search '{q}', skipping")
                                 continue
 
@@ -307,8 +307,10 @@ def _scrape_with_http() -> list[DealItem]:
 
             print(f"[Flipkart] HTTP search '{q}' — page length={len(resp.text)}")
 
-            # Check for captcha
-            if "recaptcha" in resp.text.lower() or len(resp.text) < 5000:
+            # Check for actual CAPTCHA block (not just recaptcha script tags)
+            # Flipkart loads reCAPTCHA Enterprise on ALL pages, so we check for
+            # the actual challenge form, not just the word "recaptcha"
+            if _is_flipkart_blocked(resp.text):
                 print(f"[Flipkart] HTTP search '{q}' — CAPTCHA/block detected")
                 continue
 
@@ -711,6 +713,41 @@ def _parse_flipkart_product_link(link_el, page) -> DealItem | None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _is_flipkart_blocked(html: str) -> bool:
+    """Detect if Flipkart returned an actual CAPTCHA block page.
+    
+    Flipkart loads Google reCAPTCHA Enterprise scripts on ALL pages,
+    so simply checking for 'recaptcha' will always return True.
+    A real block has: very short HTML body, challenge form, or 
+    "are you a human" / "unusual traffic" text.
+    """
+    lower = html.lower()
+    
+    # Very short response is likely a block page
+    if len(html) < 5000:
+        return True
+    
+    # Actual CAPTCHA challenge indicators (not just script loading)
+    block_indicators = [
+        "are you a human",
+        "unusual traffic",
+        "sorry, you have been blocked",
+        "access denied",
+        "captcha-delivery",
+        "g-recaptcha-response",  # actual CAPTCHA form field, not just script
+    ]
+    
+    for indicator in block_indicators:
+        if indicator in lower:
+            return True
+    
+    # If page has no product-like content at all, it's likely blocked
+    # Normal Flipkart pages have data-id divs or product links
+    if "data-id" not in html and "/p/" not in html and len(html) < 50000:
+        return True
+    
+    return False
 
 def _make_flipkart_link(el) -> str | None:
     if not el:

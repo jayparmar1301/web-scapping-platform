@@ -574,35 +574,95 @@ def _fetch_with_browser(page, path: str, captured_products: list[dict]) -> list[
 
 
 def _extract_products_from_page(html: str) -> list[dict]:
-    """Extract product dicts from Myntra's embedded JSON in page source."""
-    patterns = [
-        r'window\.__myx\s*=\s*(\{.+?\});\s*</script',
-        r'"searchData"\s*:\s*(\{.+?\})\s*,\s*"',
-        r'"products"\s*:\s*(\[(?:\{.+?\}(?:\s*,\s*\{.+?\})*)\])',
-    ]
-
-    for pattern in patterns:
-        match = re.search(pattern, html, re.DOTALL)
-        if match:
+    """Extract product dicts from Myntra's embedded JSON in page source.
+    
+    Uses balanced bracket counting instead of regex to handle large
+    nested JSON structures that regex-based approaches fail on.
+    """
+    # Strategy 1: Find window.__myx = {...}; and extract using bracket counting
+    myx_markers = ["window.__myx=", "window.__myx =", "window.__myx  ="]
+    for marker in myx_markers:
+        idx = html.find(marker)
+        if idx == -1:
+            continue
+        # Find the opening brace
+        brace_start = html.find("{", idx)
+        if brace_start == -1:
+            continue
+        json_str = _extract_balanced_json(html, brace_start, "{", "}")
+        if json_str:
             try:
-                raw = match.group(1)
-                data = json.loads(raw)
+                data = json.loads(json_str)
+                products = (
+                    data.get("products")
+                    or data.get("searchData", {}).get("results", {}).get("products")
+                    or data.get("results", {}).get("products")
+                )
+                if products and isinstance(products, list):
+                    return products
+            except (json.JSONDecodeError, KeyError):
+                pass
 
-                if isinstance(data, list):
-                    return data
-                elif isinstance(data, dict):
-                    products = (
-                        data.get("products")
-                        or data.get("results", {}).get("products")
-                        or data.get("searchData", {}).get("results", {}).get("products")
-                    )
-                    if products and isinstance(products, list):
-                        return products
-            except (json.JSONDecodeError, KeyError) as e:
-                print(f"[Myntra] Embedded JSON parse error: {e}")
-                continue
+    # Strategy 2: Find "products": [...] directly in the HTML
+    products_idx = html.find('"products"')
+    while products_idx != -1:
+        # Find the opening bracket after "products":
+        bracket_start = html.find("[", products_idx, products_idx + 50)
+        if bracket_start != -1:
+            json_str = _extract_balanced_json(html, bracket_start, "[", "]")
+            if json_str and len(json_str) > 10:
+                try:
+                    products = json.loads(json_str)
+                    if isinstance(products, list) and len(products) > 0:
+                        # Verify first item looks like a product
+                        if isinstance(products[0], dict) and any(
+                            k in products[0] for k in ("product", "productName", "brand", "price")
+                        ):
+                            return products
+                except json.JSONDecodeError:
+                    pass
+        # Try next occurrence
+        products_idx = html.find('"products"', products_idx + 10)
 
     return []
+
+
+def _extract_balanced_json(html: str, start: int, open_char: str, close_char: str) -> str | None:
+    """Extract a balanced JSON object/array from HTML starting at `start`.
+    
+    Counts brackets to find the matching close bracket, respecting
+    strings (so brackets inside quoted strings are ignored).
+    """
+    depth = 0
+    in_string = False
+    escape_next = False
+    
+    for i in range(start, min(start + 2_000_000, len(html))):
+        ch = html[i]
+        
+        if escape_next:
+            escape_next = False
+            continue
+        
+        if ch == '\\' and in_string:
+            escape_next = True
+            continue
+        
+        if ch == '"':
+            in_string = not in_string
+            continue
+        
+        if in_string:
+            continue
+        
+        if ch == open_char:
+            depth += 1
+        elif ch == close_char:
+            depth -= 1
+            if depth == 0:
+                return html[start:i + 1]
+    
+    return None
 
 
 def _parse_dom_product_cards(page) -> list[DealItem]:
