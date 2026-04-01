@@ -385,24 +385,41 @@ def _scrape_with_playwright() -> list[DealItem]:
 # ---------------------------------------------------------------------------
 
 def _is_blocked(html: str) -> bool:
-    """Detect if Amazon returned a CAPTCHA or anti-bot block page."""
+    """Detect if Amazon returned a CAPTCHA or anti-bot block page.
+    
+    Normal Amazon pages include 'captcha' and 'amzn' in scripts/meta tags,
+    so we can't just check for those strings. Instead, we check if the page
+    has actual product content — if it does, it's not blocked.
+    """
     lower = html.lower()
-    blocked_indicators = [
+    
+    # Short page is almost certainly a block/captcha page
+    if len(html) < 10000:
+        return True
+    
+    # If the page has product search results, it's NOT blocked
+    if "data-component-type=\"s-search-result\"" in html:
+        return False
+    if "s-search-results" in html:
+        return False
+    # Goldbox page indicators
+    if "dealcard" in lower or "deal-card" in lower or "dealcontainer" in lower:
+        return False
+    
+    # Explicit block page indicators
+    block_phrases = [
         "sorry, you have been blocked",
         "to discuss automated access",
         "api-services-support@amazon.com",
-        "captcha",
         "type the characters you see in this image",
         "robot check",
     ]
-    # Short page + block indicator = definitely blocked
-    if len(html) < 10000:
-        for indicator in blocked_indicators:
-            if indicator in lower:
-                return True
-    # Also check normal-length pages for captcha forms
-    if "captcha" in lower and "amzn" in lower:
-        return True
+    for phrase in block_phrases:
+        if phrase in lower:
+            return True
+
+    # No product content and no explicit block — likely a redirect/error page
+    # but not necessarily blocked, so don't flag it
     return False
 
 

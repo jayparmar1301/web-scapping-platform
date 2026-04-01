@@ -717,36 +717,38 @@ def _parse_flipkart_product_link(link_el, page) -> DealItem | None:
 def _is_flipkart_blocked(html: str) -> bool:
     """Detect if Flipkart returned an actual CAPTCHA block page.
     
-    Flipkart loads Google reCAPTCHA Enterprise scripts on ALL pages,
-    so simply checking for 'recaptcha' will always return True.
-    A real block has: very short HTML body, challenge form, or 
-    "are you a human" / "unusual traffic" text.
+    Flipkart loads Google reCAPTCHA Enterprise on ALL pages (including
+    'g-recaptcha-response' hidden fields), so we can't check for those.
+    Instead: if the page has product content, it's NOT blocked.
     """
-    lower = html.lower()
-    
     # Very short response is likely a block page
     if len(html) < 5000:
         return True
     
-    # Actual CAPTCHA challenge indicators (not just script loading)
+    # If the page has product-like content, it's NOT blocked
+    if "data-id" in html:
+        return False
+    if "/p/" in html:
+        return False
+    if "s-search-result" in html:
+        return False
+    
+    # Actual CAPTCHA challenge indicators
+    lower = html.lower()
     block_indicators = [
         "are you a human",
         "unusual traffic",
         "sorry, you have been blocked",
         "access denied",
         "captcha-delivery",
-        "g-recaptcha-response",  # actual CAPTCHA form field, not just script
     ]
     
     for indicator in block_indicators:
         if indicator in lower:
             return True
     
-    # If page has no product-like content at all, it's likely blocked
-    # Normal Flipkart pages have data-id divs or product links
-    if "data-id" not in html and "/p/" not in html and len(html) < 50000:
-        return True
-    
+    # Large page with no product content — might be a different page type, 
+    # but not a CAPTCHA block. Let it pass and the parser will just find 0 cards.
     return False
 
 def _make_flipkart_link(el) -> str | None:
