@@ -51,8 +51,8 @@ def fetch_best_deals(
 
     total = query.count()
     
-    # Sort deals by discount percent (best deals first)
-    query = query.order_by(desc(DBDeal.discountPercent), DBDeal.id)
+    # Sort deals by most recent first
+    query = query.order_by(desc(DBDeal.createdAt), desc(DBDeal.updatedAt), DBDeal.id.desc())
     
     offset = (page - 1) * limit
     page_items = query.offset(offset).limit(limit).all()
