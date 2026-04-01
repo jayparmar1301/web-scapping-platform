@@ -3,9 +3,17 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from services.deal_service import fetch_best_deals, get_top_categories, get_top_brands
 from core.database import get_db
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Deal Scraper API", version="2.0.0")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],        # allow all domains
+    allow_credentials=False,    # MUST be False when using "*"
+    allow_methods=["*"],        # allow all HTTP methods
+    allow_headers=["*"],        # allow all headers
+)
 
 @app.get("/deals/best-deals")
 def best_deals(

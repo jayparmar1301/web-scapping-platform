@@ -26,10 +26,10 @@ def _get_proxy_config():
 
 
 def _launch_browser(playwright):
-    """Launch a headed Chromium browser with proxy."""
+    """Launch a headless Chromium browser with proxy."""
     proxy_config = _get_proxy_config()
     return playwright.chromium.launch(
-        headless=False,
+        headless=True,
         proxy=proxy_config
     )
 

@@ -1,5 +1,6 @@
 from bs4 import BeautifulSoup
 from core.http_client import get_session
+from core.config import PROXY_URL
 from models.deal import DealItem, parse_price, compute_discount, extract_brand
 import urllib.parse
 import re
@@ -84,10 +85,17 @@ def get_deals() -> list[DealItem]:
     Strategy:
       1. Try /gp/goldbox (Today's Deals) for structured product cards.
       2. Fall back to search-based deal queries to get real products.
+      3. If HTTP-based scraping fails, try Playwright headless browser.
     """
+    print("[Amazon] Starting deal scraper...")
     deals = _scrape_goldbox()
     if not deals:
+        print("[Amazon] Goldbox yielded 0, trying search fallback...")
         deals = _scrape_deals_search()
+    if not deals:
+        print("[Amazon] HTTP scraping yielded 0, trying Playwright fallback...")
+        deals = _scrape_with_playwright()
+    print(f"[Amazon] Total deals scraped: {len(deals)}")
     return deals
 
 
@@ -99,6 +107,12 @@ def _scrape_goldbox() -> list[DealItem]:
         resp = session.get("https://www.amazon.in/gp/goldbox", timeout=20)
         resp.encoding = 'utf-8'
         soup = BeautifulSoup(resp.text, 'lxml')
+        print(f"[Amazon] Loaded goldbox, page length={len(resp.text)}")
+
+        # Check for CAPTCHA / block
+        if _is_blocked(resp.text):
+            print("[Amazon] Goldbox page returned CAPTCHA/block")
+            return deals
 
         # Deal cards on goldbox page
         cards = soup.select(
@@ -107,6 +121,7 @@ def _scrape_goldbox() -> list[DealItem]:
             "div[class*='DealCard'], "
             "div.a-section.dealContainer"
         )
+        print(f"[Amazon] Goldbox deal cards found: {len(cards)}")
 
         for card in cards[:100]:
             deal = _parse_amazon_deal_card(card)
@@ -115,14 +130,16 @@ def _scrape_goldbox() -> list[DealItem]:
 
         if not deals:
             items = soup.select("div[data-component-type='s-search-result'], li.a-spacing-none")
+            print(f"[Amazon] Goldbox search-result items found: {len(items)}")
             for item in items[:100]:
                 deal = _parse_amazon_search_item(item)
                 if deal:
                     deals.append(deal)
 
     except Exception as e:
-        print(f"Amazon goldbox scrape error: {e}")
+        print(f"[Amazon] Goldbox scrape error: {e}")
 
+    print(f"[Amazon] Goldbox deals: {len(deals)}")
     return deals
 
 
@@ -135,6 +152,8 @@ def _scrape_deals_search() -> list[DealItem]:
         "todays deals",
         "lightning deals",
         "deals of the day",
+        "best sellers",
+        "top offers",
     ]
 
     for q in queries:
@@ -146,14 +165,20 @@ def _scrape_deals_search() -> list[DealItem]:
             resp.encoding = 'utf-8'
             soup = BeautifulSoup(resp.text, 'lxml')
 
+            if _is_blocked(resp.text):
+                print(f"[Amazon] Search '{q}' — CAPTCHA/block detected")
+                continue
+
             items = soup.select("div[data-component-type='s-search-result']")
+            print(f"[Amazon] Search '{q}' — found {len(items)} product cards")
             for item in items[:50]:
                 deal = _parse_amazon_search_item(item)
                 if deal:
                     deals.append(deal)
         except Exception as e:
-            print(f"Amazon deals search error ({q}): {e}")
+            print(f"[Amazon] Search error ({q}): {e}")
 
+    print(f"[Amazon] Search fallback deals: {len(deals)}")
     return deals
 
 
@@ -279,8 +304,107 @@ def _parse_amazon_search_item(item) -> DealItem | None:
 
 
 # ---------------------------------------------------------------------------
+# Playwright fallback
+# ---------------------------------------------------------------------------
+
+def _scrape_with_playwright() -> list[DealItem]:
+    """Use Playwright headless browser to scrape Amazon when HTTP is blocked.
+    
+    Amazon aggressively serves CAPTCHAs to plain HTTP requests.
+    A headless browser with proper proxy can bypass this.
+    """
+    deals: list[DealItem] = []
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("[Amazon] Playwright not installed, skipping browser fallback")
+        return deals
+
+    proxy_config = None
+    if PROXY_URL:
+        parsed = urllib.parse.urlparse(PROXY_URL)
+        proxy_config = {
+            "server": f"http://{parsed.hostname}:{parsed.port}",
+            "username": parsed.username,
+            "password": parsed.password,
+        }
+
+    search_queries = [
+        "todays deals",
+        "best offers today",
+        "lightning deals",
+    ]
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                proxy=proxy_config,
+            )
+            page = browser.new_page()
+
+            for q in search_queries:
+                if len(deals) >= 150:
+                    break
+                try:
+                    url = f"https://www.amazon.in/s?k={urllib.parse.quote_plus(q)}&deals=1"
+                    page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                    page.wait_for_timeout(3000)
+
+                    html = page.content()
+                    print(f"[Amazon] Playwright '{q}' — page length={len(html)}")
+
+                    if _is_blocked(html):
+                        print(f"[Amazon] Playwright '{q}' — CAPTCHA/block")
+                        continue
+
+                    soup = BeautifulSoup(html, 'lxml')
+                    items = soup.select("div[data-component-type='s-search-result']")
+                    print(f"[Amazon] Playwright '{q}' — found {len(items)} product cards")
+
+                    for item in items[:50]:
+                        deal = _parse_amazon_search_item(item)
+                        if deal:
+                            deals.append(deal)
+
+                except Exception as e:
+                    print(f"[Amazon] Playwright page error ({q}): {e}")
+
+            browser.close()
+
+    except Exception as e:
+        print(f"[Amazon] Playwright launch error: {e}")
+
+    print(f"[Amazon] Playwright fallback deals: {len(deals)}")
+    return deals
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _is_blocked(html: str) -> bool:
+    """Detect if Amazon returned a CAPTCHA or anti-bot block page."""
+    lower = html.lower()
+    blocked_indicators = [
+        "sorry, you have been blocked",
+        "to discuss automated access",
+        "api-services-support@amazon.com",
+        "captcha",
+        "type the characters you see in this image",
+        "robot check",
+    ]
+    # Short page + block indicator = definitely blocked
+    if len(html) < 10000:
+        for indicator in blocked_indicators:
+            if indicator in lower:
+                return True
+    # Also check normal-length pages for captcha forms
+    if "captcha" in lower and "amzn" in lower:
+        return True
+    return False
+
 
 def _make_amazon_link(el) -> str | None:
     if not el or not el.get("href"):
