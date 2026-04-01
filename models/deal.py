@@ -74,11 +74,17 @@ def reset_id_counter():
 
 
 def parse_price(text: str | None) -> float | None:
-    """Extract numeric price from strings like '₹1,299', '1299.00', etc."""
+    """Extract numeric price from strings like '₹1,299', '1299.00', 'Rs. 1,079' etc."""
     if not text:
         return None
     import re
-    cleaned = re.sub(r'[^\d.]', '', text.replace(',', ''))
+    # Strip currency symbols and "Rs." prefix first to avoid leftover dots
+    stripped = re.sub(r'(?:Rs\.?|₹)\s*', '', text)
+    cleaned = re.sub(r'[^\d.]', '', stripped.replace(',', ''))
+    # If multiple dots remain (e.g. from malformed input), keep only the last one
+    if cleaned.count('.') > 1:
+        parts = cleaned.split('.')
+        cleaned = ''.join(parts[:-1]) + '.' + parts[-1]
     try:
         return float(cleaned) if cleaned else None
     except ValueError:
