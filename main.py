@@ -2,6 +2,8 @@ from fastapi import FastAPI, Query, Depends
 from sqlalchemy.orm import Session
 from typing import Optional
 from services.deal_service import fetch_best_deals, get_top_categories, get_top_brands, fetch_deal_by_slug
+from services.search_service import search_across_platforms
+from services.query_service import normalize_query
 from core.database import get_db
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -61,6 +63,17 @@ def top_brands(db: Session = Depends(get_db)):
 def deal_by_slug(slug: str, db: Session = Depends(get_db)):
     """Fetch a single deal by its URL slug."""
     return fetch_deal_by_slug(db, slug)
+
+@app.get("/products/search")
+def live_product_search(q: str = Query(..., description="Raw user query")):
+    """Live search across all platforms concurrently."""
+    items = search_across_platforms(q, limit_per_platform=10)
+    return {
+        "query": q,
+        "normalized_query": normalize_query(q),
+        "total_results": len(items),
+        "items": items
+    }
 
 
 if __name__ == "__main__":

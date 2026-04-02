@@ -31,71 +31,41 @@ def _launch_browser(playwright):
     )
 
 
-def search_product(query: str):
-    """Search Flipkart for products using Playwright (unchanged)."""
+def search_products(query: str, limit: int = 15) -> list[DealItem]:
+    """Search Flipkart for products using Playwright and return DealItems."""
     url = f"https://www.flipkart.com/search?q={urllib.parse.quote_plus(query)}"
-    results = []
+    deals = []
 
     try:
         with sync_playwright() as p:
             browser = _launch_browser(p)
             page = browser.new_page()
             try:
-                page.goto(url, timeout=25000)
+                page.goto(url, timeout=30000)
                 page.wait_for_timeout(4000)
 
                 content = page.content()
-                if _is_flipkart_blocked(content):
-                    print("Flipkart: CAPTCHA detected even with Playwright")
+                if _is_flipkart_blocked(content) or "recaptcha" in content.lower() or "are you a human" in content.lower():
+                    print("Flipkart: CAPTCHA detected on search")
                     browser.close()
-                    return []
+                    return deals
 
                 product_cards = page.query_selector_all("div[data-id]")
 
-                for card in product_cards[:10]:
-                    try:
-                        title_el = card.query_selector("a[class*='wjcEIp'], a[class*='IRpwTa'], div[class*='_4rR01T'], a[class*='s1Q9rs']")
-                        if not title_el:
-                            title_el = card.query_selector("a[title], div[class*='col'] a")
-                        title = title_el.get_attribute("title") or title_el.inner_text() if title_el else None
-
-                        if not title or len(title.strip()) < 3:
-                            continue
-
-                        price_el = card.query_selector("div.hZ3P6w, div[class*='_30jeq3'], div[class*='Nx9bqj']")
-                        price = price_el.inner_text().strip() if price_el else None
-
-                        link_el = card.query_selector("a[href]")
-                        link = None
-                        if link_el:
-                            href = link_el.get_attribute("href")
-                            if href and href.startswith("/"):
-                                link = "https://www.flipkart.com" + href
-                            elif href:
-                                link = href
-
-                        img_el = card.query_selector("img[src*='rukminim'], img[src*='flixcart']")
-                        image = img_el.get_attribute("src") if img_el else None
-
-                        results.append({
-                            "platform": "Flipkart",
-                            "title": title.strip(),
-                            "price": price,
-                            "link": link,
-                            "image": image
-                        })
-                    except Exception:
-                        continue
+                for card in product_cards[:limit]:
+                    deal = _parse_flipkart_product_card(card)
+                    if deal:
+                        deals.append(deal)
 
             except Exception as e:
-                print(f"Flipkart Playwright navigation error: {e}")
+                print(f"Flipkart search Playwright navigation error: {e}")
             finally:
                 browser.close()
 
     except Exception as e:
-        print(f"Flipkart Playwright launch error: {e}")
+        print(f"Flipkart search Playwright launch error: {e}")
 
-    return results
+    return deals
 
 
 def extract_product_title(url: str):

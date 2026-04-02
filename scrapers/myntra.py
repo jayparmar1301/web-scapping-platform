@@ -48,89 +48,41 @@ def _get_myntra_session():
     return session
 
 
-def search_product(query: str):
-    """Search Myntra via their internal search API (unchanged)."""
-    session = _get_myntra_session()
-    search_query = query.replace(" ", "-").lower()
-    api_url = f"https://www.myntra.com/gateway/v2/search/{urllib.parse.quote(search_query)}"
-
-    params = {
-        "p": "1",
-        "rows": "10",
-        "o": "0",
-        "platefrom": "desktop",
-        "q": search_query,
-    }
-
+def search_products(query: str, limit: int = 15) -> list[DealItem]:
+    """Search Myntra using Playwright XHR interceptor and return DealItems."""
+    search_path = urllib.parse.quote(query.replace(' ', '-').lower())
+    deals = []
+    
     try:
-        resp = session.get(api_url, params=params, timeout=20)
-
-        if resp.status_code == 200:
-            try:
-                data = resp.json()
-                products = data.get("products", [])
-                results = []
-                for p in products[:10]:
-                    results.append({
-                        "platform": "Myntra",
-                        "title": f"{p.get('brand', '')} {p.get('product', '')}".strip(),
-                        "price": f"₹{p.get('price', p.get('mrp', 'N/A'))}",
-                        "link": f"https://www.myntra.com/{p.get('landingPageUrl', '')}",
-                        "image": p.get("searchImage") or (
-                            p.get("images", [{}])[0].get("src") if p.get("images") else None
-                        )
-                    })
-                if results:
-                    return results
-            except (json.JSONDecodeError, ValueError):
-                pass
-
-        return _search_myntra_html(query)
-
-    except Exception as e:
-        print(f"Myntra API search error: {e}")
-        return _search_myntra_html(query)
-
-
-def _search_myntra_html(query: str):
-    """Fallback: Search Myntra via HTML and extract embedded JSON."""
-    session = get_session()
-    search_query = query.replace(" ", "-").lower()
-    url = f"https://www.myntra.com/{urllib.parse.quote(search_query)}"
-
-    try:
-        resp = session.get(url, timeout=20)
-        resp.encoding = 'utf-8'
-        results = []
-
-        patterns = [
-            r'window\.__myx\s*=\s*(\{.+?\});\s*</',
-            r'"searchData"\s*:\s*(\{.+?\})\s*[,}]',
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, resp.text, re.DOTALL)
-            if match:
+        with sync_playwright() as p:
+            browser = _launch_browser(p)
+            page = browser.new_page()
+            
+            captured_products = []
+            def _on_response(response):
                 try:
-                    data = json.loads(match.group(1))
-                    products = data.get("searchData", data).get("results", {}).get("products", [])
-                    for p in products[:10]:
-                        results.append({
-                            "platform": "Myntra",
-                            "title": f"{p.get('brand', '')} {p.get('product', p.get('productName', ''))}".strip(),
-                            "price": f"₹{p.get('price', p.get('mrp', 'N/A'))}",
-                            "link": f"https://www.myntra.com/{p.get('landingPageUrl', '')}",
-                            "image": p.get("searchImage")
-                        })
-                    if results:
-                        return results
-                except (json.JSONDecodeError, KeyError):
-                    continue
-
-        return results
+                    if response.status == 200 and "search" in response.url.lower():
+                        ct = response.headers.get("content-type", "")
+                        if "json" in ct or "javascript" in ct:
+                            data = response.json()
+                            products = data.get("products", [])
+                            if products:
+                                captured_products.extend(products)
+                except Exception:
+                    pass
+            
+            page.on("response", _on_response)
+            
+            try:
+                deals = _fetch_with_browser(page, search_path, captured_products)
+            finally:
+                browser.close()
     except Exception as e:
-        print(f"Myntra HTML search error: {e}")
-        return []
+        print(f"[Myntra] Search error: {e}")
+        
+    return deals[:limit]
+
+
 
 
 def extract_product_title(url: str):

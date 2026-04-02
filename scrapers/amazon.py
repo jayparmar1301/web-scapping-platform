@@ -6,51 +6,25 @@ import urllib.parse
 import re
 
 
-def search_product(query: str):
-    """Search Amazon.in for products (legacy helper, unchanged)."""
+def search_products(query: str, limit: int = 15) -> list[DealItem]:
+    """Search Amazon.in for products based on keywords and return DealItems."""
     session = get_session()
     url = f"https://www.amazon.in/s?k={urllib.parse.quote_plus(query)}"
+    results = []
     try:
         resp = session.get(url, timeout=20)
         resp.encoding = 'utf-8'
         soup = BeautifulSoup(resp.text, 'lxml')
-        results = []
 
         items = soup.select("div[data-component-type='s-search-result']")
-        for item in items[:10]:
-            h2_elem = item.select_one("h2")
-            title = h2_elem.get_text(strip=True) if h2_elem else None
-
-            price_whole = item.select_one("span.a-price-whole")
-            link_elem = item.select_one("h2 a, a.a-link-normal.s-no-outline")
-            img_elem = item.select_one("img.s-image")
-
-            if not title:
-                continue
-
-            price = None
-            if price_whole:
-                price = price_whole.get_text(strip=True).replace(",", "").rstrip(".")
-                price = f"₹{price}"
-
-            link = None
-            if link_elem and link_elem.get("href"):
-                href = link_elem["href"]
-                link = ("https://www.amazon.in" + href) if href.startswith("/") else href
-
-            image = img_elem["src"] if img_elem and img_elem.get("src") else None
-
-            results.append({
-                "platform": "Amazon",
-                "title": title,
-                "price": price,
-                "link": link,
-                "image": image
-            })
-        return results
+        for item in items[:limit]:
+            deal = _parse_amazon_search_item(item)
+            if deal:
+                results.append(deal)
     except Exception as e:
         print(f"Amazon search error: {e}")
-        return []
+        
+    return results
 
 
 def extract_product_title(url: str):
